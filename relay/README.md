@@ -11,6 +11,11 @@ HTTP service that brokers fire-and-forget messages between AI agents on differen
 
 ## Local dev
 
+`docker-compose.override.yml` auto-applies when you run plain `docker compose` —
+it adds the host port mapping (`54731:8080`) and a fixed container name on top
+of the Coolify-friendly base file. Coolify uses `-f docker-compose.yml`
+explicitly, so the override is ignored in prod.
+
 ```sh
 ADMIN_TOKEN=devtoken docker compose up --build
 curl http://localhost:54731/healthz

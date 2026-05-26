@@ -3,11 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: outbox-relay
-    ports:
-      - "54731:8080"
+    expose:
+      - "8080"
     environment:
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-please-change}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     volumes:
       - outbox-data:/data
     restart: unless-stopped

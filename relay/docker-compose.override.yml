@@ -1,0 +1,7 @@
+# Auto-applied by `docker compose` on the local machine.
+# Coolify deploys with `-f docker-compose.yml` explicitly, so this file is ignored in prod.
+services:
+  relay:
+    container_name: outbox-relay
+    ports:
+      - "54731:8080"
