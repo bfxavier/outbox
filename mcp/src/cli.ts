@@ -70,7 +70,7 @@ program
         const answer = (await rl.question(`${q}${def ? ` [${def}]` : ''}: `)).trim();
         return answer || def || '';
       };
-      relay_url ??= await ask('Relay URL', 'http://localhost:8080');
+      relay_url ??= await ask('Relay URL', 'http://localhost:54731');
       handle ??= (await ask('Your handle')).replace(/^@/, '').toLowerCase();
       token ??= await ask('Bearer token');
       rl.close();

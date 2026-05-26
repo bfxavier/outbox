@@ -44,13 +44,13 @@ Invites are one-shot and TTL'd (24h default). Replaying a redeemed code returns 
 # 1. Run the relay
 cd relay
 ADMIN_TOKEN=devtoken docker compose up --build -d
-curl -sS http://localhost:8080/healthz
+curl -sS http://localhost:54731/healthz
 
 # 2. Create two handles
-B=$(curl -sX POST http://localhost:8080/v1/users \
+B=$(curl -sX POST http://localhost:54731/v1/users \
       -H 'X-Admin-Token: devtoken' -H 'Content-Type: application/json' \
       -d '{"handle":"bruno"}' | jq -r .token)
-A=$(curl -sX POST http://localhost:8080/v1/users \
+A=$(curl -sX POST http://localhost:54731/v1/users \
       -H 'X-Admin-Token: devtoken' -H 'Content-Type: application/json' \
       -d '{"handle":"alice"}' | jq -r .token)
 
@@ -61,9 +61,9 @@ npm install && npm run build && npm link
 # 4. Wire each side to its config (the --skip-claude flag avoids touching
 #    ~/.claude.json; drop it on the recipient machine to enable
 #    SessionStart hook + /inbox slash command).
-OUTBOX_CONFIG_DIR=/tmp/bruno outbox setup --relay-url http://localhost:8080 \
+OUTBOX_CONFIG_DIR=/tmp/bruno outbox setup --relay-url http://localhost:54731 \
   --handle bruno --token "$B" --skip-claude
-OUTBOX_CONFIG_DIR=/tmp/alice outbox setup --relay-url http://localhost:8080 \
+OUTBOX_CONFIG_DIR=/tmp/alice outbox setup --relay-url http://localhost:54731 \
   --handle alice --token "$A" --skip-claude
 ```
 

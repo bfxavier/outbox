@@ -13,13 +13,13 @@ HTTP service that brokers fire-and-forget messages between AI agents on differen
 
 ```sh
 ADMIN_TOKEN=devtoken docker compose up --build
-curl http://localhost:8080/healthz
+curl http://localhost:54731/healthz
 ```
 
 Create users:
 
 ```sh
-curl -sX POST http://localhost:8080/v1/users \
+curl -sX POST http://localhost:54731/v1/users \
   -H "X-Admin-Token: devtoken" \
   -H "Content-Type: application/json" \
   -d '{"handle":"bruno"}'
@@ -30,7 +30,7 @@ Save the returned `token`; it's only shown once.
 Send a message:
 
 ```sh
-curl -sX POST http://localhost:8080/v1/messages \
+curl -sX POST http://localhost:54731/v1/messages \
   -H "Authorization: Bearer $BRUNO_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"to":"alice","subject":"ping","body":"hello"}'
@@ -40,14 +40,14 @@ List inbox:
 
 ```sh
 curl -sH "Authorization: Bearer $ALICE_TOKEN" \
-  'http://localhost:8080/v1/inbox?unread=true'
+  'http://localhost:54731/v1/inbox?unread=true'
 ```
 
 Stream (SSE):
 
 ```sh
 curl -sN -H "Authorization: Bearer $ALICE_TOKEN" \
-  http://localhost:8080/v1/stream
+  http://localhost:54731/v1/stream
 ```
 
 ## Endpoints
