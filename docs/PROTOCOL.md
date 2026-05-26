@@ -58,6 +58,25 @@ Returns the full message (body + metadata). Caller must be sender or recipient. 
 
 Sets `read_at = now()` for the recipient. Idempotent in that only the recipient can ack and the first ack wins.
 
+### `POST /v1/invites`
+
+Admin-only (header `X-Admin-Token`). Creates a brand-new user **and** a one-shot invite code in one transaction.
+
+Body: `{"handle": "alice", "ttl_hours": 24}` (ttl_hours optional, clamped to 1–720)
+Returns: `{"code": "…", "handle": "alice", "url": "https://relay/install.sh?invite=…", "expires_at": "…"}`
+Errors: `400 invalid_handle`, `409 handle_exists`, `401`
+
+### `POST /v1/invites/{code}/redeem`
+
+No auth. Returns the handle + freshly-minted bearer + the relay's own base URL exactly once.
+
+Returns: `{"handle": "alice", "token": "ob_alice_…", "relay_url": "https://relay"}`
+Errors: `410 Gone` (unknown code, expired, or already redeemed)
+
+### `GET /install.sh?invite=<code>`
+
+No auth. Returns a `text/x-shellscript` installer with `RELAY_URL` and `INVITE_CODE` baked in. The script clones the repo (`OUTBOX_REPO_URL` env override on the relay; defaults to the public GitHub URL), builds the MCP package, and runs `outbox setup --invite <code>` to finish.
+
 ### `GET /v1/stream`
 
 Server-Sent Events. Auth via `Authorization` header.

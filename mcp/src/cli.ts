@@ -10,6 +10,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import { configPath } from './config.js';
 import { readCache } from './cache.js';
 
@@ -18,22 +19,62 @@ program.name('outbox').description('Outbox CLI — cross-machine AI agent messag
 
 program
   .command('setup')
-  .description('Interactive: write config, register MCP server, install SessionStart hook + /inbox slash command')
+  .description('Write config, register MCP server, install SessionStart hook + /inbox slash command')
   .option('--relay-url <url>', 'relay base URL')
   .option('--handle <handle>', 'your handle (e.g. bruno)')
   .option('--token <token>', 'your bearer token')
+  .option('--invite <code>', 'redeem an invite code (skips handle/token prompts)')
   .option('--skip-claude', 'skip writing Claude Code integration files', false)
-  .action(async (opts: { relayUrl?: string; handle?: string; token?: string; skipClaude?: boolean }) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const ask = async (q: string, def?: string): Promise<string> => {
-      const answer = (await rl.question(`${q}${def ? ` [${def}]` : ''}: `)).trim();
-      return answer || def || '';
-    };
+  .action(async (opts: {
+    relayUrl?: string;
+    handle?: string;
+    token?: string;
+    invite?: string;
+    skipClaude?: boolean;
+  }) => {
+    let relay_url = opts.relayUrl;
+    let handle = opts.handle?.replace(/^@/, '').toLowerCase();
+    let token = opts.token;
 
-    const relay_url = opts.relayUrl ?? (await ask('Relay URL', 'http://localhost:8080'));
-    const handle = (opts.handle ?? (await ask('Your handle'))).replace(/^@/, '').toLowerCase();
-    const token = opts.token ?? (await ask('Bearer token'));
-    rl.close();
+    if (opts.invite) {
+      if (!relay_url) {
+        console.error('--invite requires --relay-url.');
+        process.exit(1);
+      }
+      try {
+        const res = await fetch(
+          `${relay_url}/v1/invites/${encodeURIComponent(opts.invite)}/redeem`,
+          { method: 'POST' },
+        );
+        if (res.status === 410) {
+          console.error('Invite is invalid, expired, or already used.');
+          process.exit(1);
+        }
+        if (!res.ok) {
+          console.error(`Invite redemption failed: HTTP ${res.status} ${res.statusText}`);
+          process.exit(1);
+        }
+        const data = (await res.json()) as { handle: string; token: string; relay_url?: string };
+        handle = data.handle;
+        token = data.token;
+        if (data.relay_url) relay_url = data.relay_url;
+        console.log(`Redeemed invite for @${handle}.`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Could not reach ${relay_url}: ${msg}`);
+        process.exit(1);
+      }
+    } else if (!relay_url || !handle || !token) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const ask = async (q: string, def?: string): Promise<string> => {
+        const answer = (await rl.question(`${q}${def ? ` [${def}]` : ''}: `)).trim();
+        return answer || def || '';
+      };
+      relay_url ??= await ask('Relay URL', 'http://localhost:8080');
+      handle ??= (await ask('Your handle')).replace(/^@/, '').toLowerCase();
+      token ??= await ask('Bearer token');
+      rl.close();
+    }
 
     if (!relay_url || !handle || !token) {
       console.error('relay-url, handle, and token are all required.');
@@ -84,6 +125,41 @@ program
     console.log(JSON.stringify(c, null, 2));
   });
 
+program
+  .command('invite <handle>')
+  .description('Admin: mint an invite link for a new handle. Requires ADMIN_TOKEN env + --relay-url (or OUTBOX_RELAY_URL).')
+  .option('--relay-url <url>', 'relay base URL', process.env.OUTBOX_RELAY_URL)
+  .option('--ttl-hours <n>', 'invite TTL in hours (1–720)', '24')
+  .action(async (handle: string, opts: { relayUrl?: string; ttlHours?: string }) => {
+    const adminToken = process.env.ADMIN_TOKEN ?? process.env.OUTBOX_ADMIN_TOKEN;
+    if (!adminToken) {
+      console.error('Set ADMIN_TOKEN (or OUTBOX_ADMIN_TOKEN) env var.');
+      process.exit(1);
+    }
+    const relayUrl = opts.relayUrl;
+    if (!relayUrl) {
+      console.error('--relay-url or OUTBOX_RELAY_URL required.');
+      process.exit(1);
+    }
+    const ttl = Number(opts.ttlHours ?? 24);
+    const normalised = handle.replace(/^@/, '').toLowerCase();
+    const res = await fetch(`${relayUrl}/v1/invites`, {
+      method: 'POST',
+      headers: { 'X-Admin-Token': adminToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handle: normalised, ttl_hours: ttl }),
+    });
+    if (!res.ok) {
+      console.error(`Invite creation failed: ${res.status} ${await res.text()}`);
+      process.exit(1);
+    }
+    const data = (await res.json()) as { code: string; handle: string; url: string; expires_at: string };
+    console.log();
+    console.log(`Invite for @${data.handle} (expires ${data.expires_at}):`);
+    console.log();
+    console.log(`  curl -fsSL "${data.url}" | bash`);
+    console.log();
+  });
+
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
@@ -93,13 +169,15 @@ function installClaudeIntegration(): void {
   const claudeDir = join(homedir(), '.claude');
   mkdirSync(claudeDir, { recursive: true });
 
-  // 1. Register MCP server in ~/.claude.json
+  // 1. Register MCP server in ~/.claude.json — use absolute paths so PATH doesn't matter
+  const here = fileURLToPath(import.meta.url);
+  const mcpEntry = join(dirname(here), 'index.js');
   const claudeJsonPath = join(homedir(), '.claude.json');
   try {
     let j: { mcpServers?: Record<string, unknown> } = {};
     if (existsSync(claudeJsonPath)) j = JSON.parse(readFileSync(claudeJsonPath, 'utf8'));
     j.mcpServers = j.mcpServers ?? {};
-    j.mcpServers.outbox = { command: 'outbox-mcp' };
+    j.mcpServers.outbox = { command: process.execPath, args: [mcpEntry] };
     writeFileSync(claudeJsonPath, JSON.stringify(j, null, 2));
     console.log(`Registered MCP server in ${claudeJsonPath}`);
   } catch (e) {

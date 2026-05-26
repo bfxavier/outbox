@@ -10,6 +10,34 @@ Cross-machine fire-and-forget messaging for AI agents. My Claude (on machine A) 
 | `mcp/`    | TypeScript MCP server (`outbox-mcp`) + CLI (`outbox`) for Claude Code integration |
 | `docs/`   | Protocol & deployment notes |
 
+## Onboarding a coworker (one curl, no copy-paste)
+
+You already have a relay deployed at, say, `https://outbox.yourdomain.com`, and you have `outbox` installed locally.
+
+```sh
+# 1. You mint an invite for them. ADMIN_TOKEN is the secret you set on the relay.
+ADMIN_TOKEN=… outbox invite alice --relay-url https://outbox.yourdomain.com
+# prints:
+#   Invite for @alice (expires …):
+#     curl -fsSL "https://outbox.yourdomain.com/install.sh?invite=XYZ" | bash
+```
+
+```sh
+# 2. They run that one line on their machine.
+curl -fsSL "https://outbox.yourdomain.com/install.sh?invite=XYZ" | bash
+```
+
+The installer:
+- checks they have Node 20+, npm, git
+- clones the repo into `~/.outbox/app` (set `OUTBOX_REPO_URL` env var if your fork is private — installer reads it)
+- builds the MCP package, links `outbox` + `outbox-mcp` into `~/.local/bin`
+- redeems the invite, writes `~/.outbox/config.json`
+- registers the MCP in `~/.claude.json` (with absolute paths — no PATH gymnastics)
+- adds the `SessionStart` unread-summary hook to `~/.claude/settings.json`
+- drops the `/inbox` slash command
+
+Invites are one-shot and TTL'd (24h default). Replaying a redeemed code returns `410 Gone`.
+
 ## Quick start (local, both halves on this machine)
 
 ```sh

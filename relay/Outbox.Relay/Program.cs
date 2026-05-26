@@ -14,6 +14,8 @@ builder.Host.UseSerilog((ctx, cfg) => cfg
 var dbPath = Environment.GetEnvironmentVariable("OUTBOX_DB_PATH") ?? "/data/outbox.db";
 var adminToken = Environment.GetEnvironmentVariable("ADMIN_TOKEN")
     ?? throw new InvalidOperationException("ADMIN_TOKEN env var is required");
+var repoUrl = Environment.GetEnvironmentVariable("OUTBOX_REPO_URL")
+    ?? "https://github.com/bfxavier/outbox.git";
 
 builder.Services.AddSingleton(new SqliteStore(dbPath));
 builder.Services.AddSingleton<StreamHub>();
@@ -33,6 +35,15 @@ string? Authenticate(HttpContext ctx, SqliteStore store)
     var auth = ctx.Request.Headers.Authorization.ToString();
     if (!auth.StartsWith("Bearer ", StringComparison.Ordinal)) return null;
     return store.AuthenticateBearer(auth["Bearer ".Length..].Trim());
+}
+
+static string GetBaseUrl(HttpContext ctx)
+{
+    var fwdProto = ctx.Request.Headers["X-Forwarded-Proto"].ToString();
+    var scheme = string.IsNullOrEmpty(fwdProto) ? ctx.Request.Scheme : fwdProto.Split(',')[0].Trim();
+    var fwdHost = ctx.Request.Headers["X-Forwarded-Host"].ToString();
+    var host = string.IsNullOrEmpty(fwdHost) ? ctx.Request.Host.Value : fwdHost.Split(',')[0].Trim();
+    return $"{scheme}://{host}";
 }
 
 app.MapGet("/healthz", () => Results.Ok(new { ok = true }));
@@ -91,6 +102,40 @@ app.MapPost("/v1/messages/{id}/ack", (HttpContext ctx, string id, SqliteStore st
     if (me is null) return Results.StatusCode(401);
     var ok = store.AckMessage(id, me);
     return ok ? Results.Ok(new AckResponse(true)) : Results.NotFound();
+});
+
+app.MapPost("/v1/invites", (HttpContext ctx, CreateInviteRequest req, SqliteStore store) =>
+{
+    var admin = ctx.Request.Headers["X-Admin-Token"].ToString();
+    if (admin != adminToken) return Results.StatusCode(401);
+    var handle = req.Handle?.Trim().TrimStart('@').ToLowerInvariant() ?? "";
+    if (!handleRegex.IsMatch(handle))
+        return Results.BadRequest(new { error = "invalid_handle" });
+    var ttl = TimeSpan.FromHours(Math.Clamp(req.TtlHours ?? 24, 1, 24 * 30));
+    try
+    {
+        var code = store.CreateInvite(handle, ttl);
+        var baseUrl = GetBaseUrl(ctx);
+        var url = $"{baseUrl}/install.sh?invite={code}";
+        return Results.Ok(new CreateInviteResponse(code, handle, url, DateTimeOffset.UtcNow.Add(ttl)));
+    }
+    catch (InvalidOperationException e) when (e.Message == "handle_exists")
+    {
+        return Results.Conflict(new { error = "handle_exists" });
+    }
+});
+
+app.MapPost("/v1/invites/{code}/redeem", (HttpContext ctx, string code, SqliteStore store) =>
+{
+    var result = store.RedeemInvite(code);
+    if (result is null) return Results.StatusCode(410);
+    return Results.Ok(new RedeemInviteResponse(result.Value.handle, result.Value.token, GetBaseUrl(ctx)));
+});
+
+app.MapGet("/install.sh", (HttpContext ctx, string? invite) =>
+{
+    var script = InstallerScript.Generate(GetBaseUrl(ctx), invite, repoUrl);
+    return Results.Text(script, "text/x-shellscript", System.Text.Encoding.UTF8);
 });
 
 app.MapGet("/v1/stream", async (HttpContext ctx, SqliteStore store, StreamHub hub) =>
