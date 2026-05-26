@@ -5,13 +5,14 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { configPath } from './config.js';
+import { configDir, configPath } from './config.js';
 import { readCache } from './cache.js';
 
 const program = new Command();
@@ -25,12 +26,14 @@ program
   .option('--token <token>', 'your bearer token')
   .option('--invite <code>', 'redeem an invite code (skips handle/token prompts)')
   .option('--skip-claude', 'skip writing Claude Code integration files', false)
+  .option('--skip-statusline', 'do not wire the unread badge into your statusline', false)
   .action(async (opts: {
     relayUrl?: string;
     handle?: string;
     token?: string;
     invite?: string;
     skipClaude?: boolean;
+    skipStatusline?: boolean;
   }) => {
     let relay_url = opts.relayUrl;
     let handle = opts.handle?.replace(/^@/, '').toLowerCase();
@@ -103,6 +106,13 @@ program
     }
 
     if (!opts.skipClaude) installClaudeIntegration();
+    if (!opts.skipStatusline) {
+      try {
+        installStatusline();
+      } catch (e) {
+        console.warn(`Statusline install skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   });
 
 program
@@ -168,6 +178,20 @@ program
     console.log(`  curl -fsSL "${data.url}" | bash`);
     console.log();
   });
+
+const statusline = program
+  .command('statusline')
+  .description('Manage the Claude Code statusline integration');
+
+statusline
+  .command('install')
+  .description('Wire the unread badge into your Claude Code statusline (preserves the existing command)')
+  .action(() => installStatusline());
+
+statusline
+  .command('uninstall')
+  .description('Restore your previous statusline command and remove the outbox wrapper')
+  .action(() => uninstallStatusline());
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : String(err));
@@ -240,4 +264,104 @@ function installClaudeIntegration(): void {
   } else {
     console.log(`${slashPath} already exists; not overwriting.`);
   }
+}
+
+function statuslineFiles() {
+  const here = fileURLToPath(import.meta.url);
+  const cliJs = join(dirname(here), 'cli.js');
+  const wrapper = join(configDir(), 'statusline.sh');
+  const backup = join(configDir(), 'wrapped-statusline.txt');
+  const settings = join(homedir(), '.claude', 'settings.json');
+  return { cliJs, wrapper, backup, settings };
+}
+
+function installStatusline(): void {
+  const { cliJs, wrapper, backup, settings } = statuslineFiles();
+  const node = process.execPath;
+
+  mkdirSync(configDir(), { recursive: true });
+
+  const script = [
+    '#!/usr/bin/env bash',
+    '# Outbox statusline wrapper — managed by `outbox statusline install`.',
+    '# Prepends the unread badge to whatever statusline you had before.',
+    'set +e',
+    'INPUT="$(cat)"',
+    '',
+    `BADGE="$(${shellEscape(node)} ${shellEscape(cliJs)} status 2>/dev/null)"`,
+    '',
+    'INNER_OUT=""',
+    `if [ -s ${shellEscape(backup)} ]; then`,
+    `  INNER_CMD="$(cat ${shellEscape(backup)})"`,
+    '  INNER_OUT="$(printf \'%s\' "$INPUT" | bash -c "$INNER_CMD" 2>/dev/null)"',
+    'fi',
+    '',
+    'if [ -n "$BADGE" ] && [ -n "$INNER_OUT" ]; then',
+    "  printf '%s  %s' \"$BADGE\" \"$INNER_OUT\"",
+    'elif [ -n "$BADGE" ]; then',
+    '  printf \'%s\' "$BADGE"',
+    'else',
+    '  printf \'%s\' "$INNER_OUT"',
+    'fi',
+    '',
+  ].join('\n');
+
+  writeFileSync(wrapper, script);
+  chmodSync(wrapper, 0o755);
+
+  let s: { statusLine?: { type?: string; command?: string } } = {};
+  if (existsSync(settings)) {
+    try { s = JSON.parse(readFileSync(settings, 'utf8')); }
+    catch (e) { console.warn(`Could not parse ${settings}: ${e instanceof Error ? e.message : String(e)}`); return; }
+  }
+
+  const current = s.statusLine?.command;
+  const alreadyWrapped = current === wrapper;
+
+  if (current && !alreadyWrapped) {
+    writeFileSync(backup, current);
+    console.log(`Backed up previous statusLine command to ${backup}`);
+  }
+
+  s.statusLine = { type: 'command', command: wrapper };
+  mkdirSync(dirname(settings), { recursive: true });
+  writeFileSync(settings, JSON.stringify(s, null, 2));
+  console.log(`Set statusLine to ${wrapper}`);
+  console.log('Restart Claude Code to see the badge.');
+}
+
+function uninstallStatusline(): void {
+  const { wrapper, backup, settings } = statuslineFiles();
+  if (!existsSync(settings)) {
+    console.log(`No ${settings}; nothing to do.`);
+    return;
+  }
+
+  let s: { statusLine?: { type?: string; command?: string } } = {};
+  try { s = JSON.parse(readFileSync(settings, 'utf8')); }
+  catch (e) { console.warn(`Could not parse ${settings}: ${e instanceof Error ? e.message : String(e)}`); return; }
+
+  let restored = '(none)';
+  if (existsSync(backup)) {
+    const original = readFileSync(backup, 'utf8').trim();
+    if (original) {
+      s.statusLine = { type: 'command', command: original };
+      restored = original;
+    } else {
+      delete s.statusLine;
+    }
+  } else if (s.statusLine?.command === wrapper) {
+    delete s.statusLine;
+  }
+  writeFileSync(settings, JSON.stringify(s, null, 2));
+  console.log(`Restored statusLine: ${restored}`);
+
+  for (const f of [wrapper, backup]) {
+    try { if (existsSync(f)) unlinkSync(f); } catch { /* non-fatal */ }
+  }
+  console.log('Removed wrapper + backup files.');
+}
+
+function shellEscape(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
