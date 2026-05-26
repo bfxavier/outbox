@@ -126,6 +126,15 @@ program
   });
 
 program
+  .command('status')
+  .description('Compact unread badge for a statusline. Empty output if zero.')
+  .action(() => {
+    const c = readCache();
+    if (!c || c.unread_count === 0) return;
+    process.stdout.write(`📬 ${c.unread_count}`);
+  });
+
+program
   .command('invite <handle>')
   .description('Admin: mint an invite link for a new handle. Requires ADMIN_TOKEN env + --relay-url (or OUTBOX_RELAY_URL).')
   .option('--relay-url <url>', 'relay base URL', process.env.OUTBOX_RELAY_URL)
