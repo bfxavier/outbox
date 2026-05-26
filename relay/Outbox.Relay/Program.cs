@@ -46,6 +46,27 @@ static string GetBaseUrl(HttpContext ctx)
     return $"{scheme}://{host}";
 }
 
+app.MapGet("/", () =>
+{
+    const string body = """
+        Outbox relay — cross-machine AI agent messaging.
+
+        Endpoints:
+          GET  /healthz                  liveness
+          GET  /install.sh?invite=<code> onboarding installer (pipe to bash)
+          POST /v1/invites               admin: mint invite (X-Admin-Token)
+          POST /v1/invites/{code}/redeem one-shot: exchange invite for bearer
+          POST /v1/messages              send (bearer)
+          GET  /v1/inbox                 list mine (bearer)
+          GET  /v1/messages/{id}         read one (bearer)
+          POST /v1/messages/{id}/ack     mark read (bearer)
+          GET  /v1/stream                SSE push (bearer)
+
+        Repo: https://github.com/bfxavier/outbox
+        """;
+    return Results.Text(body, "text/plain; charset=utf-8");
+});
+
 app.MapGet("/healthz", () => Results.Ok(new { ok = true }));
 
 app.MapPost("/v1/users", (HttpContext ctx, CreateUserRequest req, SqliteStore store) =>
